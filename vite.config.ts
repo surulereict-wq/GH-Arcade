@@ -43,8 +43,8 @@ export default defineConfig({
       // Every built file (icons included) is picked up by globPatterns below, so nothing is listed twice.
       includeManifestIcons: false,
       manifest: {
-        name: 'GH Arcade',
-        short_name: 'GH Arcade',
+        name: 'Naija Arcade',
+        short_name: 'Naija Arcade',
         description: 'A neon arcade of free browser games. Plays offline once installed.',
         id: BASE,
         start_url: BASE,
