@@ -131,5 +131,13 @@
     ],
     "accent": "#f6c90e",
     "controls": "↑ ↓ / swipe / tap top or bottom"
+  },
+  { 
+    "slug": "agbero",
+    "title": "Agbero Rumble",
+    "description": "Defend your Lagos motor park from rival boys. Punch, kick and shout your way through waves, boss fights and flying zobo.",
+    "tags": ["brawler", "action"],
+    "accent": "#ffe45e",
+    "controls": "Arrows + Space / Shift / C, or touch stick and buttons"
   }
 ]
