@@ -120,5 +120,16 @@
     "accent": "#ff2e97",
     "controls": "Left / right / hold sides / gamepad",
     "thumbnail": "thumbs/pinball.jpg"
+  },
+  {
+    "slug": "danfo",
+    "title": "Danfo Dash",
+    "description": "Drive a yellow Lagos danfo through rush-hour traffic. Pick up passengers and naira, dodge okada, keke, trucks and potholes.",
+    "tags": [
+      "endless",
+      "action"
+    ],
+    "accent": "#f6c90e",
+    "controls": "↑ ↓ / swipe / tap top or bottom"
   }
 ]
