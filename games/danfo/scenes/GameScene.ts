@@ -1,12 +1,16 @@
 import Phaser from 'phaser';
 import {
   ACCELERATION,
+  BOOST_MS,
+  BOOST_SPEED_MUL,
+  COMBO_STEP,
   CRASH_SLOWDOWN,
   FARE_POINTS,
   GAME_ID,
   HEIGHT,
   INVULN_MS,
   LANE_Y,
+  MAX_MULT,
   MAX_SPEED,
   NAIRA_POINTS,
   PLAYER_H,
@@ -18,15 +22,16 @@ import {
   START_LIVES,
   START_SPEED,
   WIDTH,
+  ZONES,
 } from '../config';
 import { ArcadeControls } from '../../../shared/controls';
 import { PauseController } from '../../../shared/pause';
 import { noise, tone } from '../../../shared/sfx';
 import { getHighScore } from '../../../shared/storage';
 import { onSwipe } from '../../../shared/touch';
-import { burstEmitter, floatText, NEON, PIXEL_FONT, reducedMotion } from '../../../shared/ui';
+import { burstEmitter, floatText, NEON, PIXEL_FONT, reducedMotion, showBanner } from '../../../shared/ui';
 
-type Kind = 'car' | 'keke' | 'truck' | 'okada' | 'pothole' | 'passenger' | 'naira';
+type Kind = 'car' | 'keke' | 'truck' | 'brt' | 'okada' | 'pothole' | 'passenger' | 'naira' | 'boost';
 
 interface KindInfo {
   w: number;
@@ -40,11 +45,15 @@ const KINDS: Record<Kind, KindInfo> = {
   car: { w: 86, h: 40, drive: 140, harmful: true },
   keke: { w: 60, h: 38, drive: 100, harmful: true },
   truck: { w: 130, h: 50, drive: 90, harmful: true },
+  brt: { w: 200, h: 46, drive: 120, harmful: true },
   okada: { w: 56, h: 26, drive: 200, harmful: true },
   pothole: { w: 62, h: 26, drive: 0, harmful: true },
   passenger: { w: 26, h: 40, drive: 0, harmful: false },
   naira: { w: 34, h: 22, drive: 0, harmful: false },
+  boost: { w: 34, h: 34, drive: 0, harmful: false },
 };
+
+const SHOUTS = ['OYA!', 'ONE SEAT!', 'ENTER!', 'CONDUCTOR!'];
 
 const BODY_COLORS = [0xc0392b, 0x2c7be5, 0xe8e8f0, 0x27ae60, 0x8e44ad, 0xe67e22];
 
@@ -61,7 +70,7 @@ interface Building {
   x: number;
   w: number;
   h: number;
-  color: number;
+  shade: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -76,12 +85,17 @@ export class GameScene extends Phaser.Scene {
   private invuln = 0;
   private alive = true;
   private elapsed = 0;
+  private combo = 0;
+  private boostMs = 0;
+  private zoneIdx = 0;
 
   private far: Building[] = [];
   private gfx!: Phaser.GameObjects.Graphics;
   private burst!: Phaser.GameObjects.Particles.ParticleEmitter;
   private scoreText!: Phaser.GameObjects.Text;
   private livesText!: Phaser.GameObjects.Text;
+  private zoneText!: Phaser.GameObjects.Text;
+  private comboText!: Phaser.GameObjects.Text;
   private controls!: ArcadeControls;
   private pause!: PauseController;
 
@@ -101,10 +115,14 @@ export class GameScene extends Phaser.Scene {
     this.invuln = 0;
     this.alive = true;
     this.elapsed = 0;
+    this.combo = 0;
+    this.boostMs = 0;
+    this.zoneIdx = 0;
   }
 
   create(): void {
     this.cameras.main.fadeIn(250, 5, 5, 13);
+    this.cameras.main.setBackgroundColor(ZONES[0].sky);
     this.far = this.makeSkyline();
     this.gfx = this.add.graphics();
     this.burst = burstEmitter(this, 320, 600);
@@ -118,6 +136,14 @@ export class GameScene extends Phaser.Scene {
       .setDepth(10);
     this.add
       .text(20, 44, `BEST ${getHighScore(GAME_ID).toLocaleString()}`, { fontFamily: PIXEL_FONT, fontSize: '10px', color: '#8a8ab8' })
+      .setDepth(10);
+
+    this.zoneText = this.add
+      .text(WIDTH / 2, 16, ZONES[0].name, { fontFamily: PIXEL_FONT, fontSize: '11px', color: '#ffe45e' })
+      .setOrigin(0.5, 0)
+      .setDepth(10);
+    this.comboText = this.add
+      .text(20, 66, '', { fontFamily: PIXEL_FONT, fontSize: '10px', color: '#ffe45e' })
       .setDepth(10);
 
     this.controls = new ArcadeControls(this);
@@ -144,7 +170,9 @@ export class GameScene extends Phaser.Scene {
     if (this.controls.justPressed('down')) this.changeLane(1);
 
     this.speed = Math.min(MAX_SPEED, this.speed + ACCELERATION * dt);
-    this.distance += this.speed * dt;
+    this.distance += this.speed * dt * (this.boostMs > 0 ? BOOST_SPEED_MUL : 1);
+    if (this.boostMs > 0) this.boostMs -= dt * 1000;
+    this.checkZone();
     this.y += (LANE_Y[this.lane] - this.y) * Math.min(1, dt * 14);
     if (this.invuln > 0) this.invuln -= dt * 1000;
 
@@ -166,10 +194,12 @@ export class GameScene extends Phaser.Scene {
     while (this.nextSpawnAt < this.distance + WIDTH + 200) {
       const roll = Math.random();
       const lane = Phaser.Math.Between(0, LANE_Y.length - 1);
-      if (roll < 0.22) {
+      if (roll < 0.2) {
         this.add1('passenger', this.nextSpawnAt, lane);
-      } else if (roll < 0.38) {
+      } else if (roll < 0.34) {
         for (let i = 0; i < 3; i++) this.add1('naira', this.nextSpawnAt + i * 55, lane);
+      } else if (roll < 0.375) {
+        this.add1('boost', this.nextSpawnAt, lane);
       } else if (roll < 0.52) {
         // Two lanes blocked, one open: forces a decision.
         const open = Phaser.Math.Between(0, LANE_Y.length - 1);
@@ -184,7 +214,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private pickObstacle(): Kind {
-    const pool: Kind[] = ['car', 'car', 'keke', 'keke', 'truck', 'okada', 'pothole', 'pothole'];
+    const pool: Kind[] = ['car', 'car', 'keke', 'keke', 'truck', 'brt', 'okada', 'pothole', 'pothole'];
     return pool[Phaser.Math.Between(0, pool.length - 1)];
   }
 
@@ -210,7 +240,7 @@ export class GameScene extends Phaser.Scene {
       const overlapY = Math.abs(LANE_Y[t.lane] - this.y) < (info.h + PLAYER_H) / 2 - 6;
       if (!overlapX || !overlapY) continue;
       if (info.harmful) {
-        if (this.invuln <= 0) this.crash(sx, LANE_Y[t.lane]);
+        if (this.invuln <= 0 && this.boostMs <= 0) this.crash(sx, LANE_Y[t.lane]);
       } else {
         t.taken = true;
         this.collect(t.kind, sx, LANE_Y[t.lane]);
@@ -219,16 +249,48 @@ export class GameScene extends Phaser.Scene {
   }
 
   private collect(kind: Kind, sx: number, sy: number): void {
-    const points = kind === 'passenger' ? FARE_POINTS : NAIRA_POINTS;
+    if (kind === 'boost') {
+      this.boostMs = BOOST_MS;
+      floatText(this, sx, sy - 40, 'NEPA BRING LIGHT!', NEON.yellow, 12);
+      this.burst.setParticleTint(NEON.yellow);
+      this.burst.explode(18, sx, sy);
+      tone({ freq: 440, toFreq: 1320, duration: 0.25, type: 'sawtooth' });
+      return;
+    }
+    this.combo++;
+    const mult = this.multiplier();
+    const points = (kind === 'passenger' ? FARE_POINTS : NAIRA_POINTS) * mult;
     this.fares += points;
-    floatText(this, sx, sy - 40, kind === 'passenger' ? `+${points} OYA!` : `+${points}`, kind === 'passenger' ? NEON.yellow : NEON.green);
+    const shout = kind === 'passenger' ? SHOUTS[Phaser.Math.Between(0, SHOUTS.length - 1)] : '';
+    floatText(this, sx, sy - 40, `+${points}${mult > 1 ? ` x${mult}` : ''} ${shout}`.trim(), kind === 'passenger' ? NEON.yellow : NEON.green);
     this.burst.setParticleTint(kind === 'passenger' ? NEON.yellow : NEON.green);
     this.burst.explode(10, sx, sy);
     tone({ freq: 660, toFreq: kind === 'passenger' ? 1100 : 880, duration: 0.09 });
+    if (this.combo % (COMBO_STEP * 2) === 0) showBanner(this, 'CONDUCTOR: OYA! OYA! OYA!', NEON.yellow, 150);
+  }
+
+  private multiplier(): number {
+    return Math.min(MAX_MULT, 1 + Math.floor(this.combo / COMBO_STEP));
+  }
+
+  /** Moves to the next district when the distance passes its start. */
+  private checkZone(): void {
+    const metres = Math.floor(this.distance / PX_PER_METRE);
+    let idx = this.zoneIdx;
+    while (idx + 1 < ZONES.length && metres >= ZONES[idx + 1].fromMetre) idx++;
+    if (idx === this.zoneIdx) return;
+    this.zoneIdx = idx;
+    const zone = ZONES[idx];
+    this.cameras.main.setBackgroundColor(zone.sky);
+    this.zoneText.setText(zone.name);
+    showBanner(this, zone.name, zone.color, 220);
+    floatText(this, WIDTH / 2, 280, zone.shout, zone.color, 12);
+    tone({ freq: 523, toFreq: 784, duration: 0.2 });
   }
 
   private crash(sx: number, sy: number): void {
     this.lives--;
+    this.combo = 0;
     this.invuln = INVULN_MS;
     this.speed = Math.max(START_SPEED, this.speed * CRASH_SLOWDOWN);
     noise(0.25, 0.12);
@@ -253,6 +315,11 @@ export class GameScene extends Phaser.Scene {
     const metres = Math.floor(this.distance / PX_PER_METRE);
     this.scoreText.setText(String(metres + this.fares));
     this.livesText.setText('♥'.repeat(Math.max(0, this.lives)));
+    const mult = this.multiplier();
+    const parts: string[] = [];
+    if (this.combo > 0) parts.push(`COMBO ${this.combo}${mult > 1 ? `  x${mult}` : ''}`);
+    if (this.boostMs > 0) parts.push('TURBO!');
+    this.comboText.setText(parts.join('   '));
   }
 
   private makeSkyline(): Building[] {
@@ -260,7 +327,7 @@ export class GameScene extends Phaser.Scene {
     let x = 0;
     while (x < WIDTH + 400) {
       const w = Phaser.Math.Between(50, 110);
-      out.push({ x, w, h: Phaser.Math.Between(60, 200), color: [0x1d2a4a, 0x2b2350, 0x3a2a3d][Phaser.Math.Between(0, 2)] });
+      out.push({ x, w, h: Phaser.Math.Between(60, 200), shade: Phaser.Math.Between(0, 2) });
       x += w + Phaser.Math.Between(4, 16);
     }
     return out;
@@ -269,19 +336,35 @@ export class GameScene extends Phaser.Scene {
   private draw(): void {
     const g = this.gfx.clear();
 
-    // Skyline, scrolling slowly.
+    const zone = ZONES[this.zoneIdx];
+    if (zone.night) {
+      for (let i = 0; i < 40; i++) {
+        const alpha = 0.55 + 0.35 * Math.sin(this.elapsed * 3 + i);
+        g.fillStyle(0xffffff, alpha).fillRect((i * 97) % WIDTH, 20 + ((i * 53) % 190), 2, 2);
+      }
+    }
+
+    // Skyline, scrolling slowly. The bridge district keeps the buildings low and shows the lagoon.
+    const heightScale = zone.water ? 0.4 : 1;
     const span = this.far[this.far.length - 1].x + this.far[this.far.length - 1].w + 10;
     const shift = (this.distance * 0.2) % span;
     for (const b of this.far) {
+      const bh = b.h * heightScale;
       for (const k of [0, span]) {
         const bx = b.x - shift + k;
         if (bx > WIDTH || bx + b.w < 0) continue;
-        g.fillStyle(b.color, 1).fillRect(bx, ROAD_TOP - b.h, b.w, b.h);
-        g.fillStyle(NEON.yellow, 0.35);
-        for (let wy = ROAD_TOP - b.h + 10; wy < ROAD_TOP - 14; wy += 22) {
+        g.fillStyle(zone.shades[b.shade], 1).fillRect(bx, ROAD_TOP - bh, b.w, bh);
+        g.fillStyle(zone.window, 0.35);
+        for (let wy = ROAD_TOP - bh + 10; wy < ROAD_TOP - 14; wy += 22) {
           for (let wx = bx + 8; wx < bx + b.w - 12; wx += 18) g.fillRect(wx, wy, 7, 9);
         }
       }
+    }
+    if (zone.water) {
+      g.fillStyle(0x0b4f8a, 1).fillRect(0, ROAD_TOP - 34, WIDTH, 34);
+      g.fillStyle(0x7fd0ff, 0.5);
+      const wave = (this.distance * 0.5) % 70;
+      for (let x = -70; x < WIDTH + 70; x += 70) g.fillRect(x - wave, ROAD_TOP - 20, 30, 3).fillRect(x - wave + 35, ROAD_TOP - 9, 24, 3);
     }
 
     // Road, kerbs and dashed lane lines.
@@ -301,7 +384,8 @@ export class GameScene extends Phaser.Scene {
       if (t.taken) continue;
       this.drawThing(g, t, t.x - this.distance + PLAYER_X, LANE_Y[t.lane]);
     }
-    const flashing = this.invuln > 0 && Math.floor(this.elapsed * 14) % 2 === 0;
+    const flashing = this.invuln > 0 && this.boostMs <= 0 && Math.floor(this.elapsed * 14) % 2 === 0;
+    if (this.boostMs > 0) g.fillStyle(NEON.yellow, 0.25).fillEllipse(PLAYER_X, this.y, PLAYER_W + 50, PLAYER_H + 30);
     if (!flashing && (this.alive || this.lives > 0)) this.drawDanfo(g, PLAYER_X, this.y);
   }
 
@@ -337,6 +421,17 @@ export class GameScene extends Phaser.Scene {
         g.fillStyle(0xd35400, 1).fillRect(x - w / 2, y - h / 2, w - 34, h);
         g.fillStyle(0x7f8c8d, 1).fillRect(x + w / 2 - 34, y - h / 2 + 4, 34, h - 8);
         g.fillStyle(0xffffff, 0.85).fillRect(x - w / 2 + 10, y - 4, w - 62, 8);
+        break;
+      case 'brt':
+        g.fillStyle(0x1e5aa8, 1).fillRoundedRect(x - w / 2, y - h / 2, w, h, 6);
+        g.fillStyle(0xffffff, 0.9).fillRect(x - w / 2, y - 3, w, 6);
+        g.fillStyle(0x9fd6f2, 1);
+        for (let i = 0; i < 6; i++) g.fillRect(x - w / 2 + 12 + i * 29, y - h / 2 + 5, 20, 11);
+        g.fillStyle(0xffe9a0, 1).fillRect(x - w / 2, y - h / 2 + 6, 4, 8).fillRect(x - w / 2, y + h / 2 - 14, 4, 8);
+        break;
+      case 'boost':
+        g.fillStyle(NEON.yellow, 0.35).fillCircle(x, y, 20);
+        g.fillStyle(NEON.yellow, 1).fillTriangle(x - 8, y - 14, x + 10, y - 14, x + 1, y + 1).fillTriangle(x - 10, y + 2, x + 8, y + 2, x - 1, y + 16);
         break;
       case 'okada':
         g.fillStyle(0x111111, 1).fillRect(x - w / 2, y - 3, w, 6);
