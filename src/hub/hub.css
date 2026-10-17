@@ -78,14 +78,14 @@ body {
   font-family: var(--pixel);
   font-size: clamp(32px, 9vw, 76px);
   line-height: 1.1;
-  color: var(--cyan);
-  text-shadow: 0 0 8px rgb(0 240 255 / 0.8), 0 0 32px rgb(0 240 255 / 0.4), 4px 4px 0 var(--pink);
+  color: #3dff8a;
+  text-shadow: 0 0 8px rgb(61 255 138 / 0.8), 0 0 32px rgb(61 255 138 / 0.4), 4px 4px 0 #0b5d2e;
 }
 
 .title span {
   display: block;
-  color: var(--pink);
-  text-shadow: 0 0 8px rgb(255 46 151 / 0.8), 0 0 32px rgb(255 46 151 / 0.4), 4px 4px 0 var(--cyan);
+  color: #ffe45e;
+  text-shadow: 0 0 8px rgb(255 228 94 / 0.8), 0 0 32px rgb(255 228 94 / 0.4), 4px 4px 0 #8a6a00;
 }
 
 .tagline {
